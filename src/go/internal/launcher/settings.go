@@ -14,6 +14,7 @@ import (
 // Settings retains the existing settings.json keys; Extra preserves future keys.
 type Settings struct {
 	OptimizeSpace       bool                       `json:"optimize_space"`
+	SharedRuntime       bool                       `json:"shared_runtime"`
 	DisableProtection   bool                       `json:"disable_protection"`
 	PatchGetPixel       bool                       `json:"patch_getpixel"`
 	LastSelectedVersion string                     `json:"last_selected_version"`

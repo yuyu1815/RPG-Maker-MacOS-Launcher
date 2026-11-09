@@ -1,4 +1,4 @@
-package main
+package cli
 
 import (
 	"bytes"
@@ -7,9 +7,37 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 )
+
+func TestWarningDialog(t *testing.T) {
+	warnings := []string{"protection not applied", "quote \"; $(touch /tmp/evil)\nsecond line"}
+	calls := 0
+	show := func(got []string) error {
+		calls++
+		if !reflect.DeepEqual(got, warnings) {
+			t.Fatal(got)
+		}
+		return nil
+	}
+	if err := showLaunchWarnings(false, warnings, show); err != nil {
+		t.Fatal(err)
+	}
+	if err := showLaunchWarnings(true, nil, show); err != nil {
+		t.Fatal(err)
+	}
+	if err := showLaunchWarnings(true, warnings, show); err != nil || calls != 1 {
+		t.Fatalf("calls %d: %v", calls, err)
+	}
+	if err := showLaunchWarnings(true, warnings, func([]string) error { return os.ErrPermission }); err == nil || !strings.Contains(err.Error(), warnings[0]) {
+		t.Fatalf("warning lost: %v", err)
+	}
+	if err := showLaunchWarnings(true, warnings, nil); err == nil || !strings.Contains(err.Error(), warnings[0]) {
+		t.Fatalf("missing presenter lost warnings: %v", err)
+	}
+}
 
 func TestExitedEvent(t *testing.T) {
 	for _, tc := range []struct {
@@ -41,7 +69,7 @@ func TestLaunchRejectsInvalidArguments(t *testing.T) {
 		{"no command", func(_, _, _ string) []string { return nil }},
 		{"unknown command", func(_, _, _ string) []string { return []string{"unknown"} }},
 		{"no options", func(_, _, _ string) []string { return []string{"launch"} }},
-		{"missing root", func(_, g, r string) []string { return []string{"launch", "--game", g, "--resources", r} }},
+		{"empty root", func(_, g, r string) []string { return []string{"launch", "--root", "", "--game", g, "--resources", r} }},
 		{"missing game", func(root, _, r string) []string { return []string{"launch", "--root", root, "--resources", r} }},
 		{"missing resources", func(root, g, _ string) []string { return []string{"launch", "--root", root, "--game", g} }},
 		{"relative root", func(_, g, r string) []string {
@@ -69,7 +97,7 @@ func TestLaunchRejectsInvalidArguments(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out, errOut bytes.Buffer
-			if code := run(context.Background(), tc.args(root, game, resources), &out, &errOut); code == 0 {
+			if code := Run(context.Background(), tc.args(root, game, resources), &out, &errOut, nil); code == 0 {
 				t.Fatalf("invalid arguments accepted; stdout=%q stderr=%q", out.String(), errOut.String())
 			}
 			after, err := os.ReadFile(pkg)
@@ -80,10 +108,43 @@ func TestLaunchRejectsInvalidArguments(t *testing.T) {
 	}
 }
 
+func TestLaunchRootDefaultAndOverride(t *testing.T) {
+	home, override, game, resources := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	defaultRoot := filepath.Join(home, "Library", "Application Support", "RPGM-Launcher")
+	if err := os.MkdirAll(defaultRoot, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for root, settings := range map[string]string{defaultRoot: `{"patch_getpixel":null}`, override: `{"disable_protection":null}`} {
+		if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte(settings), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(game, "Game.ini"), []byte("[Game]\nRTP=Standard\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name     string
+		rootArgs []string
+		want     string
+	}{
+		{"default", nil, "patch_getpixel"},
+		{"override", []string{"--root", override}, "disable_protection"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"launch", "--game", game, "--resources", resources}, tc.rootArgs...)
+			var out, errOut bytes.Buffer
+			if code := Run(context.Background(), args, &out, &errOut, nil); code != 1 || !strings.Contains(errOut.String(), tc.want) {
+				t.Fatalf("code=%d stdout=%q stderr=%q; want settings error for %s", code, out.String(), errOut.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestLaunchRejectsInvalidGame(t *testing.T) {
 	root, game, resources := t.TempDir(), t.TempDir(), t.TempDir()
 	var out, errOut bytes.Buffer
-	if code := run(context.Background(), []string{"launch", "--root", root, "--game", game, "--resources", resources}, &out, &errOut); code == 0 {
+	if code := Run(context.Background(), []string{"launch", "--root", root, "--game", game, "--resources", resources}, &out, &errOut, nil); code == 0 {
 		t.Fatalf("invalid game accepted; stdout=%q stderr=%q", out.String(), errOut.String())
 	}
 	if _, err := os.Stat(filepath.Join(game, "package.json")); !os.IsNotExist(err) {
@@ -100,8 +161,11 @@ func TestLaunchMissingRuntimePreservesPackage(t *testing.T) {
 	}
 	var out, errOut bytes.Buffer
 	args := []string{"launch", "--root", root, "--game", game, "--resources", resources, "--runtime", "v1.2.3", "--wait"}
-	if code := run(context.Background(), args, &out, &errOut); code == 0 {
+	if code := Run(context.Background(), args, &out, &errOut, nil); code == 0 {
 		t.Fatalf("missing runtime accepted; stdout=%q stderr=%q", out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "managed runtime missing or invalid") {
+		t.Fatalf("missing runtime error is unclear: %s", errOut.String())
 	}
 	after, err := os.ReadFile(pkg)
 	if err != nil || !bytes.Equal(after, original) {

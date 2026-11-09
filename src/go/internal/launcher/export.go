@@ -298,7 +298,16 @@ func engineXML(s string) string {
 
 // Export preflights paths/settings before creating an owned temporary output.
 // Original game/runtime files are read-only. Existing destinations are never replaced.
-func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, name string, progress ProgressFunc) (result string, err error) {
+func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, name string, progress ProgressFunc) (string, error) {
+	return m.export(ctx, game, s, dest, name, false, progress)
+}
+
+// ExportShared copies the game and a launcher, but uses the managed runtime at launch.
+func (m *Manager) ExportShared(ctx context.Context, game GameInfo, s Settings, dest, name string, progress ProgressFunc) (string, error) {
+	return m.export(ctx, game, s, dest, name, true, progress)
+}
+
+func (m *Manager) export(ctx context.Context, game GameInfo, s Settings, dest, name string, shared bool, progress ProgressFunc) (result string, err error) {
 	if err = engineContext(ctx); err != nil {
 		return "", err
 	}
@@ -332,6 +341,9 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 	if err != nil {
 		return "", err
 	}
+	if shared && game.Engine == MKXPZ {
+		return "", errors.New("shared runtime export does not support MKXP-Z: its configuration belongs to the runtime; use standalone export")
+	}
 	target := filepath.Join(dest, name+".app")
 	if within(game.Path, target) || within(m.Root, target) {
 		return "", errors.New("output must be outside the game and managed runtime root")
@@ -343,8 +355,10 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 		return "", err
 	}
 	bundle := filepath.Dir(filepath.Dir(filepath.Dir(executable)))
-	if err = engineSafeTree(ctx, bundle); err != nil {
-		return "", err
+	if !shared {
+		if err = engineSafeTree(ctx, bundle); err != nil {
+			return "", err
+		}
 	}
 	a, err := LoadAdvancedSettings(m.Root)
 	if err != nil {
@@ -364,7 +378,9 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 		}
 		config, resources, err = m.exportMKXPPlan(game, a)
 	case EasyRPG:
-		args, err = exportEasyArguments(game, a)
+		if !shared {
+			args, err = exportEasyArguments(game, a)
+		}
 	}
 	if err != nil {
 		return "", err
@@ -403,7 +419,14 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 	defer func() { err = errors.Join(err, os.RemoveAll(stage)) }()
 	app := filepath.Join(stage, "payload.app")
 	gameDir := ""
-	if game.Engine == EasyRPG {
+	if shared {
+		gameDir = filepath.Join(app, "Contents", "Resources", "game")
+		for _, file := range []string{"rpgm-cli", "bg.js", "disable-child.js", "disable-net.js"} {
+			if err = engineCopyFile(ctx, filepath.Join(m.ResourcesDir, file), filepath.Join(app, "Contents", "Resources", file), progress); err != nil {
+				return "", fmt.Errorf("shared export needs launcher resource %s: %w", file, err)
+			}
+		}
+	} else if game.Engine == EasyRPG {
 		gameDir = filepath.Join(app, "Contents", "Resources", "game")
 		if err = engineCopyTree(ctx, bundle, filepath.Join(app, "Contents", "Resources", "EasyRPG Player.app"), progress); err != nil {
 			return "", err
@@ -424,36 +447,8 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 	if err = engineCopyTree(ctx, game.Path, gameDir, progress); err != nil {
 		return "", err
 	}
-	switch game.Engine {
-	case NWJS:
-		if _, err = m.prepareNW(gameDir, s); err != nil {
-			return "", err
-		}
-	case MKXPZ:
-		for _, r := range resources {
-			to := filepath.Join(gameDir, filepath.FromSlash(r.relative))
-			info, e := os.Stat(r.source)
-			if e != nil {
-				return "", e
-			}
-			if info.IsDir() {
-				err = engineCopyTree(ctx, r.source, to, progress)
-			} else {
-				err = engineCopyFile(ctx, r.source, to, progress)
-			}
-			if err != nil {
-				return "", err
-			}
-		}
-		if err = engineWriteJSON(filepath.Join(gameDir, "mkxp.json"), config); err != nil {
-			return "", err
-		}
-	case EasyRPG:
-		script := "#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../Resources\" && pwd)\ncd -- \"$HERE/game\"\nexec /usr/bin/arch -arm64 \"$HERE/EasyRPG Player.app/Contents/MacOS/EasyRPG Player\" --window --project-path \"$HERE/game\""
-		for _, arg := range args {
-			script += " " + shellQuote(arg)
-		}
-		script += "\n"
+	if shared {
+		script := "#!/bin/sh\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../Resources\" && pwd)\noutput=$(\"$HERE/rpgm-cli\" launch --root " + shellQuote(m.Root) + " --game \"$HERE/game\" --resources \"$HERE\" --runtime " + shellQuote(s.LastSelectedVersion) + " --wait --dialog-warnings 2>&1) || { /usr/bin/osascript -e 'on run argv' -e 'display dialog (item 1 of argv) with title \"Game launch failed\" buttons {\"OK\"} default button 1' -e 'end run' -- \"$output\"; exit 1; }\n"
 		if err = os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0755); err != nil {
 			return "", err
 		}
@@ -463,6 +458,48 @@ func (m *Manager) Export(ctx context.Context, game GameInfo, s Settings, dest, n
 		plist := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>launch</string><key>CFBundleName</key><string>` + engineXML(name) + `</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
 		if err = os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte(plist), 0644); err != nil {
 			return "", err
+		}
+	} else {
+		switch game.Engine {
+		case NWJS:
+			if _, err = m.prepareNW(gameDir, s); err != nil {
+				return "", err
+			}
+		case MKXPZ:
+			for _, r := range resources {
+				to := filepath.Join(gameDir, filepath.FromSlash(r.relative))
+				info, e := os.Stat(r.source)
+				if e != nil {
+					return "", e
+				}
+				if info.IsDir() {
+					err = engineCopyTree(ctx, r.source, to, progress)
+				} else {
+					err = engineCopyFile(ctx, r.source, to, progress)
+				}
+				if err != nil {
+					return "", err
+				}
+			}
+			if err = engineWriteJSON(filepath.Join(gameDir, "mkxp.json"), config); err != nil {
+				return "", err
+			}
+		case EasyRPG:
+			script := "#!/bin/sh\nset -eu\nHERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")/../Resources\" && pwd)\ncd -- \"$HERE/game\"\nexec /usr/bin/arch -arm64 \"$HERE/EasyRPG Player.app/Contents/MacOS/EasyRPG Player\" --window --project-path \"$HERE/game\""
+			for _, arg := range args {
+				script += " " + shellQuote(arg)
+			}
+			script += "\n"
+			if err = os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0755); err != nil {
+				return "", err
+			}
+			if err = os.WriteFile(filepath.Join(app, "Contents", "MacOS", "launch"), []byte(script), 0755); err != nil {
+				return "", err
+			}
+			plist := `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>launch</string><key>CFBundleName</key><string>` + engineXML(name) + `</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`
+			if err = os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte(plist), 0644); err != nil {
+				return "", err
+			}
 		}
 	}
 	if err = ctx.Err(); err != nil {

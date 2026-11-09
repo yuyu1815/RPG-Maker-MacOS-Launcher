@@ -44,13 +44,14 @@ async function refresh(expectedNW = '') {
   versionOptions(); $('version').value = preferences.Version;
   $('disable-protection').checked = preferences.DisableProtection;
   $('patch-getpixel').checked = preferences.PatchGetPixel;
+  $('shared-runtime').checked = preferences.SharedRuntime;
   $('folder').textContent = game?.Path || preferences.Folder || 'フォルダ未選択';
   $('engine').textContent = game ? 'エンジン: ' + game.Engine : 'エンジン未判定';
   $('recovery').textContent = view.SettingsError;
   controls();
 }
 async function savePreferences() {
-  const p = {...preferences, Version: $('version').value, DisableProtection: $('disable-protection').checked, PatchGetPixel: $('patch-getpixel').checked};
+  const p = {...preferences, Version: $('version').value, DisableProtection: $('disable-protection').checked, PatchGetPixel: $('patch-getpixel').checked, SharedRuntime: $('shared-runtime').checked};
   await call('SavePreferences', p); preferences = p;
 }
 function confirm(text) {
@@ -106,7 +107,7 @@ $('pick-game').onclick = () => perform(async () => {
   const path = await call('PickFolder');
   if (path) { await call('SelectFolder', path); await refresh(); message('ゲームフォルダを選択しました'); }
 });
-for (const id of ['version', 'disable-protection', 'patch-getpixel']) $(id).onchange = () => perform(async () => { await savePreferences(); message('設定を保存しました'); });
+for (const id of ['version', 'disable-protection', 'patch-getpixel', 'shared-runtime']) $(id).onchange = () => perform(async () => { await savePreferences(); message('設定を保存しました'); });
 $('versions').onclick = () => perform(async () => { remote = (await run({Action: 'versions'})).Versions || []; versionOptions(); message('ARM 対応の公開版を取得しました'); });
 $('install-nw').onclick = () => perform(async () => {
   const version = $('version').value; if (!version) throw new Error('NW.js の版を選択してください');

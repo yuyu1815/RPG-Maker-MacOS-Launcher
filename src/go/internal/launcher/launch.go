@@ -153,7 +153,7 @@ func (m *Manager) Launch(ctx context.Context, game GameInfo, s Settings) (*Proce
 	}()
 	executable, err := m.CheckRuntime(game, s)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("managed runtime missing or invalid; install or repair it in the launcher: %w", err)
 	}
 	game, err = engineGame(game)
 	if err != nil {

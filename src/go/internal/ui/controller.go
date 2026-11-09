@@ -30,6 +30,7 @@ type Preferences struct {
 	Folder            string
 	DisableProtection bool
 	PatchGetPixel     bool
+	SharedRuntime     bool
 }
 type State struct {
 	Busy, Cancelling, Closing bool
@@ -150,7 +151,7 @@ func (u *UI) closeAfterCancel(quit func()) {
 	}()
 }
 func preferences(s launcher.Settings) Preferences {
-	return Preferences{s.LastSelectedVersion, s.LastSelectedFolder, s.DisableProtection, s.PatchGetPixel}
+	return Preferences{s.LastSelectedVersion, s.LastSelectedFolder, s.DisableProtection, s.PatchGetPixel, s.SharedRuntime}
 }
 func (u *UI) Snapshot() (Snapshot, error) {
 	s, err := launcher.LoadSettings(u.manager.Root)
@@ -189,6 +190,7 @@ func (u *UI) SavePreferences(p Preferences) error {
 		s.LastSelectedFolder = p.Folder
 		s.DisableProtection = p.DisableProtection
 		s.PatchGetPixel = p.PatchGetPixel
+		s.SharedRuntime = p.SharedRuntime
 		return launcher.SaveSettings(u.manager.Root, s)
 	})
 }
@@ -351,7 +353,11 @@ func (u *UI) Run(r Request) (result Result, err error) {
 			if e != nil {
 				return e
 			}
-			result.Path, e = u.manager.Export(ctx, game, s, dest, r.Name, progress)
+			if s.SharedRuntime {
+				result.Path, e = u.manager.ExportShared(ctx, game, s, dest, r.Name, progress)
+			} else {
+				result.Path, e = u.manager.Export(ctx, game, s, dest, r.Name, progress)
+			}
 			if e == nil {
 				u.log("書き出し完了: %s", result.Path)
 			}

@@ -119,7 +119,11 @@ case "$*" in
  *'list -m'*) printf '%s\n' "$TEST_WAILS"; exit;;
 esac
 [ "${TEST_BUILD_FAIL:-}" != 1 ] || exit 71
-[ "$CGO_ENABLED/$GOOS/$GOARCH" = 1/darwin/arm64 ]
+case "$*" in
+ *'./cmd/launcher'*) [ "$CGO_ENABLED/$GOOS/$GOARCH" = 1/darwin/arm64 ];;
+ *'./cmd/rpgm-cli'*) [ "$CGO_ENABLED/$GOOS/$GOARCH" = 0/darwin/arm64 ];;
+ *) exit 73;;
+esac
 while [ "$#" -gt 0 ]; do
  if [ "$1" = -o ]; then cp "$TEST_BINARY" "$2"; exit; fi
  shift
@@ -178,8 +182,10 @@ func (f fixture) bundle(t *testing.T, p string) {
 			t.Fatal(dest)
 		}
 	}
-	if command(t, "/usr/bin/lipo", "-archs", filepath.Join(p, "Contents/MacOS/launcher")) != "arm64" {
-		t.Fatal("not arm64")
+	for _, binary := range []string{"Contents/MacOS/launcher", "Contents/Resources/rpgm-cli"} {
+		if command(t, "/usr/bin/lipo", "-archs", filepath.Join(p, binary)) != "arm64" {
+			t.Fatal("not arm64", binary)
+		}
 	}
 	command(t, "/usr/bin/plutil", "-lint", filepath.Join(p, "Contents/Info.plist"))
 	command(t, "/usr/bin/codesign", "--verify", "--strict", p)
@@ -218,7 +224,7 @@ func TestBuildModesAndOutputContract(t *testing.T) {
 	}
 	f.bundle(t, filepath.Join(f.root, "build/validation/python-zero/gui/Legacy.app"))
 	log := string(read(t, f.log))
-	for _, flag := range []string{"-C " + filepath.Join(f.root, "src/go"), "-tags production -trimpath", "-tags production,smoke -trimpath", "-ldflags=-extldflags=-mmacosx-version-min=13.3", "./cmd/launcher"} {
+	for _, flag := range []string{"-C " + filepath.Join(f.root, "src/go"), "-tags production -trimpath", "-tags production,smoke -trimpath", "-ldflags=-extldflags=-mmacosx-version-min=13.3", "./cmd/launcher", "./cmd/rpgm-cli"} {
 		if !strings.Contains(log, flag) {
 			t.Fatal("missing flag", flag, log)
 		}

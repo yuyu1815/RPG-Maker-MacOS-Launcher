@@ -68,6 +68,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/webui"
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 go -C "$ROOT/src/go" build \
   -tags "$TAGS" -trimpath -ldflags='-extldflags=-mmacosx-version-min=13.3' \
   -o "$APP/Contents/MacOS/launcher" ./cmd/launcher
+CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go -C "$ROOT/src/go" build \
+  -trimpath -o "$APP/Contents/Resources/rpgm-cli" ./cmd/rpgm-cli
 mkdir -p "$APP/Contents/Resources/licenses"
 cp "$ROOT/LICENSE" "$APP/Contents/Resources/licenses/Launcher.txt"
 GOLICENSE="$(go env GOROOT)/LICENSE"

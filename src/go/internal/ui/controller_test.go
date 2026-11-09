@@ -23,6 +23,56 @@ func newTestUI(t *testing.T) *UI {
 	return u
 }
 
+func TestSharedRuntimePreferencePersists(t *testing.T) {
+	u := newTestUI(t)
+	view, err := u.Snapshot()
+	if err != nil || view.Preferences.SharedRuntime {
+		t.Fatalf("default: %+v %v", view.Preferences, err)
+	}
+	for _, enabled := range []bool{true, false} {
+		view.Preferences.SharedRuntime = enabled
+		if err := u.SavePreferences(view.Preferences); err != nil {
+			t.Fatal(err)
+		}
+		reloaded, err := New(u.manager.Root, u.manager.ResourcesDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		view, err = reloaded.Snapshot()
+		if err != nil || view.Preferences.SharedRuntime != enabled {
+			t.Fatalf("reload: %+v %v", view.Preferences, err)
+		}
+	}
+}
+
+func TestExportUsesSavedSharedRuntimePreference(t *testing.T) {
+	u := newTestUI(t)
+	game := t.TempDir()
+	if err := os.WriteFile(filepath.Join(game, "Game.ini"), []byte("[Game]\nRTP=Standard\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(u.manager.Root, "Z-universal.app/Contents/MacOS/Z-universal")
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		t.Fatal(err)
+	}
+	arm := make([]byte, 32)
+	binary.LittleEndian.PutUint32(arm, 0xfeedfacf)
+	binary.LittleEndian.PutUint32(arm[4:], 0x0100000c)
+	binary.LittleEndian.PutUint32(arm[12:], 2)
+	if err := os.WriteFile(path, arm, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, enabled := range []bool{false, true} {
+		if err := u.SavePreferences(Preferences{Folder: game, SharedRuntime: enabled}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := u.Run(Request{Action: "export", Destination: t.TempDir(), Name: "Game", Approved: true})
+		if err == nil || strings.Contains(err.Error(), "shared runtime export does not support MKXP-Z") != enabled {
+			t.Fatalf("shared=%v: %v", enabled, err)
+		}
+	}
+}
+
 func TestBusyCancelWaitsForCleanupAndClose(t *testing.T) {
 	u := newTestUI(t)
 	entered, cleanup, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})

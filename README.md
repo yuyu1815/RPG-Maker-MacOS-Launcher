@@ -66,18 +66,18 @@ mise exec -- sh scripts/shell/build-launcher.sh production MyLauncher.app "$PWD/
 
 ### AI・スクリプトからゲームコピーを起動
 
-GUIと同じbackendを使う開発用CLIです。ゲームの`package.json`・保護JS・パッチなどを変更する場合があるため、**原本とセーブをバックアップし、専用コピーを指定してください**。ゲームのコードはユーザー権限で実行され、CLIや専用rootはサンドボックスではありません。
+GUIと同じ実行ファイルの`launch`サブコマンドで、同じbackendをCLIから使えます。引数なしはGUI、`--root`・`--webui`・`--resources`は従来どおりGUI用です。`--help`はGUIのオプション、`launch --help`はCLIのオプションを表示します。CLIは先頭に`launch`が必要です。ゲームの`package.json`・保護JS・パッチなどを変更する場合があるため、**原本とセーブをバックアップし、専用コピーを指定してください**。ゲームのコードはユーザー権限で実行され、CLIや専用rootはサンドボックスではありません。
 
 ```sh
-mise run build-cli
-build/helpers/arm64/rpgm-cli launch \
-  --root /absolute/path/to/managed-root \
+dist/RPG-Maker-Launcher.app/Contents/MacOS/launcher launch \
   --game /absolute/path/to/game-copy \
   --resources "$PWD/src/javascript" \
   --runtime v0.94.1
 ```
 
-`--root`は導入済みランタイムとGUI設定の管理場所です。`--runtime`はNW.jsの版を一時的に指定し、省略すると保存済みの選択を使います。MKXP-Z・EasyRPGでは該当する導入済みruntimeと設定を使います。CLIは導入・ダウンロードしません。標準出力のJSONにはPID・エンジン・ゲームログのパス・警告が入り、標準エラーには診断情報が出ます。起動後はCLIが終了してもゲームは継続します。`--wait`を付けると終了を待ち、終了コードとシグナル終了時のシグナル名をJSONで出力します。待機中の割り込みはゲームを終了しません。
+別途`mise run build-cli`で生成する`build/helpers/arm64/rpgm-cli`でも同じ`launch`コマンドを使えます。共有runtime書き出し用のCGO不要なCLIもappに同梱されます。
+
+`--root`は省略可能で、導入済みランタイムとGUI設定の管理場所としてGUIと同じ`~/Library/Application Support/RPGM-Launcher`を使います。別の管理場所を使う場合は`--root /absolute/path/to/managed-root`で絶対パスを指定できます。`--runtime`はNW.jsの版を一時的に指定し、省略すると保存済みの選択を使います。MKXP-Z・EasyRPGでは該当する導入済みruntimeと設定を使います。CLIは導入・ダウンロードしません。標準出力のJSONにはPID・エンジン・ゲームログのパス・警告が入り、標準エラーには診断情報が出ます。起動後はCLIが終了してもゲームは継続します。`--wait`を付けると終了を待ち、終了コードとシグナル終了時のシグナル名をJSONで出力します。待機中の割り込みはゲームを終了しません。
 
 `started`はプロセス開始のみを示し、画面表示やゲーム互換性の保証ではありません。`game.log`は起動ごとの区切り付きで標準出力・標準エラーを追記しますが、ゲーム画面内のエラーやJavaScript例外をすべて検出するものではありません。ログにはゲームのパスなどが含まれます。
 
@@ -117,6 +117,8 @@ smokeは新HOME/rootへruntimeをコピーして専用appをbuildし、実WebKit
 Go backend/GUI移行は旧Python 62テストの目的との独立比較を通過しました。default/production/smoke/combinedのGo test・race・vet、native WebKit 31チェック、JS例外／ready timeoutのexit 1、runtime更新rollbackや設定型保持を検査しています。実NW起動ではcaller終了後のゲーム継続・共有lock保持も確認しました。これらは過去の確認結果で、ローカルの実験成果物は整理時に削除しています。
 
 公開MZデモ1本のCDPキーボードによるNew Game→移動→イベント→保存→プロセス終了→再起動→Continue/Loadを検査しました。これは人間の物理キー操作、全ゲーム互換性、GUIのゲーム選択からpatch/exportまでの一括検証ではありません。出典・1332ファイルのhash・画像・署名制約・Goでの再現手順は[検証記録](docs/validation/nwjs-go-migration.md)を参照してください。
+
+設定の「書き出しで管理済み runtime を共有する」は初期状態でオフで、変更は保存されます。共有 runtime 書き出しは NW.js と EasyRPG に対応し、ゲームだけをコピーします。同じユーザーの元の管理フォルダと runtime が必要で、削除・移動後は起動時にエラーが表示されます。NW.js の版は固定されますが、保護・詳細設定は起動時のランチャー設定を使用します。管理ロックはゲーム終了まで占有され、別の起動やインストールは同時にできません。MKXP-Z は共有 runtime 内の設定を書き換えるため非対応です（通常の standalone 書き出しを利用してください）。
 
 **未検証：** VoiceOver、IME、native folder dialogの実選択、物理window/Close/⌘Q操作、音声聴取、ほかの作品・プラグイン・長時間動作、MKXP-Z/EasyRPGの実gameplay、全standalone起動、macOS13.3実機、Developer ID署名・公証、Finder/Gatekeeper。hidden WebKitでの自動チェックはこれらの成功を意味しません。
 
